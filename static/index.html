@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Movement Reminder</title>
+  <style>
+    body { font: 16px system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
+    button { padding: .7rem 1rem; cursor: pointer; }
+    #connection, #alertStatus { padding: .7rem; background: #f0f3f5; }
+    li { margin: .5rem 0; }
+  </style>
+</head>
+<body>
+  <h1>Movement Reminder</h1>
+
+  <p id="clock">Loading local time…</p>
+  <p id="connection">Checking QEMU connection…</p>
+  <p id="alertStatus">Checking inactivity…</p>
+
+  <button id="moveButton">Simulate movement</button>
+  <button id="enableAudio">Enable sound and speech</button>
+
+  <h2>Reminder checklist</h2>
+  <ul>
+    <li>Continue your current task on Udemy.</li>
+    <li>Update your project folder.</li>
+    <li>Check that Git is connected; commit and push changes to update GitHub.</li>
+  </ul>
+
+  <h2>Recent events</h2>
+  <ul id="events"></ul>
+
+  <script>
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    let lastAlertNumber = 0;
+    let audioEnabled = false;
+
+    document.getElementById("enableAudio").addEventListener("click", () => {
+      audioEnabled = true;
+      speechSynthesis.speak(new SpeechSynthesisUtterance("Sound and speech are enabled."));
+    });
+
+    document.getElementById("moveButton").addEventListener("click", async () => {
+      const response = await fetch("/api/simulate-movement", { method: "POST" });
+      const result = await response.json();
+      alert(result.message);
+      await refresh();
+    });
+
+    function playReminder() {
+      if (!audioEnabled) {
+        alert("You have been inactive. Check the reminder checklist.");
+        return;
+      }
+
+      // Short browser-generated beep.
+      const context = new AudioContext();
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.frequency.value = 880;
+      gain.gain.value = 0.15;
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.5);
+
+      const message =
+        "Time to move for five minutes. Continue your current task on Udemy. " +
+        "Update your project folder. Check that Git is connected, then commit " +
+        "and push changes to update GitHub.";
+      speechSynthesis.speak(new SpeechSynthesisUtterance(message));
+    }
+
+    async function refresh() {
+      try {
+        const response = await fetch(
+          "/api/status?tz=" + encodeURIComponent(timezone),
+          { cache: "no-store" }
+        );
+        const data = await response.json();
+
+        document.getElementById("clock").textContent =
+          "Local time: " + new Date(data.local_time).toLocaleString() +
+          " (" + data.timezone + ")";
+
+        document.getElementById("connection").textContent =
+          data.serial_connected
+            ? "QEMU serial: connected"
+            : "QEMU serial: not connected (web simulation still works)";
+
+        const minutes = Math.floor(data.idle_seconds / 60);
+        document.getElementById("alertStatus").textContent =
+          "Allowed hours: " + (data.within_hours ? "yes" : "no") +
+          ". Time since movement: " + minutes + " minute(s). " +
+          "Reminder after " + Math.ceil(data.idle_threshold_seconds / 60) +
+          " minutes without movement.";
+
+        const list = document.getElementById("events");
+        list.replaceChildren();
+        for (const event of data.events) {
+          const item = document.createElement("li");
+          item.textContent =
+            new Date(event.time).toLocaleTimeString() + " — " +
+            event.message + " (" + event.source + ")";
+          list.appendChild(item);
+        }
+
+        if (data.alert_number > lastAlertNumber) {
+          lastAlertNumber = data.alert_number;
+          playReminder();
+        }
+      } catch (error) {
+        document.getElementById("connection").textContent =
+          "Could not contact the app backend.";
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 3000);
+  </script>
+</body>
+</html>
+
